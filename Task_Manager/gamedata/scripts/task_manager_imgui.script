@@ -1,0 +1,122 @@
+TASK_MANAGER_MENU = "Task Manager"
+task_manager_window_visible = false
+
+-- Вспомогательная таблица для конвертации кодировки
+local cp1251_map = {
+    [128]=1026, [129]=1027, [130]=8218, [131]=1107, [132]=8222, [133]=8230, [134]=8224, [135]=8225, [136]=8364, [137]=8240, [138]=1033, [139]=8249, [140]=1034, [141]=1036, [142]=1035, [143]=1039, [144]=1106, [145]=8216, [146]=8217, [147]=8220, [148]=8221, [149]=8226, [150]=8211, [151]=8212, [152]=0, [153]=8482, [154]=1113, [155]=8250, [156]=1114, [157]=1116, [158]=1115, [159]=1119, [160]=160, [161]=1038, [162]=1118, [163]=1032, [164]=164, [165]=1028, [166]=166, [167]=167, [168]=1025, [169]=169, [170]=1030, [171]=171, [172]=172, [173]=173, [174]=174, [175]=1031, [176]=176, [177]=177, [178]=1037, [179]=1117, [180]=1029, [181]=181, [182]=182, [183]=183, [184]=1105, [185]=8470, [186]=1110, [187]=187, [188]=1112, [189]=1111, [190]=1036, [191]=1108
+}
+
+-- Функция для конвертации текста из Windows-1251 в UTF-8
+local function to_utf8(str)
+    if not str then return "" end
+    local res = ""
+    for i=1, #str do
+        local c = str:byte(i)
+        local u
+        if c < 128 then u = c
+        elseif c >= 192 and c <= 255 then u = c - 192 + 1040
+        else u = cp1251_map[c] end
+        if u then
+            if u < 0x80 then res = res .. string.char(u)
+            elseif u < 0x800 then res = res .. string.char(0xC0 + math.floor(u/64), 0x80 + (u % 64))
+            elseif u < 0x10000 then res = res .. string.char(0xE0 + math.floor(u/4096), 0x80 + (math.floor(u/64) % 64), 0x80 + (u % 64))
+            end
+        end
+    end
+    return res
+end
+
+-- Helper function to get all active tasks
+local function get_active_tasks()
+    local tm = task_manager.get_task_manager()
+    local tasks = {}
+    
+    if not tm then return tasks end
+    
+    for task_id, task in pairs(tm.task_info) do
+        if task and task.t then
+            tasks[task_id] = task
+        end
+    end
+    
+    return tasks
+end
+
+function get_task_name(task_id)
+	local title_functor	= task_manager.task_ini:r_string_ex(task_id,"title_functor") or "condlist"
+	local title = game.translate_string(task_manager.task_ini:r_string_ex(task_id, "title")) or "error"
+	local current_title = db.actor and task_functor[title_functor](task_id, "title", title, nil)
+	return current_title
+end
+
+function imgui_on_render(name)
+    if name == "Main" then
+        if task_manager_window_visible then
+            local expanded, status = ImGui.Begin(TASK_MANAGER_MENU, task_manager_window_visible, ImGuiWindowFlags.None)
+            task_manager_window_visible = status
+            
+            if expanded then
+                -- Create table headers
+                if ImGui.BeginTable("TasksTable", 4, 3, vector2(0,0), 0) then -- 3 = Borders(1) + RowBg(2)
+                    ImGui.TableSetupColumn("Task", 2, 0, 0) -- 2 = WidthFixed
+                    ImGui.TableSetupColumn("Complete", 2, 0, 0) -- 2 = WidthFixed
+                    ImGui.TableSetupColumn("Fail", 2, 0, 0) -- 2 = WidthFixed
+                    ImGui.TableSetupColumn("Cancel", 2, 0, 0) -- 2 = WidthFixed
+                    ImGui.TableHeadersRow()
+                    
+                    -- Get all active tasks
+                    local tasks = get_active_tasks()
+                    
+                    -- Display tasks and controls
+                    for task_id, task in pairs(tasks) do
+                        ImGui.TableNextRow()
+                        
+                        -- Task ID column
+                        ImGui.TableNextColumn()
+                        
+                        -- Конвертируем название задания в UTF-8 перед отображением
+                        local task_name_utf8 = to_utf8(get_task_name(task_id))
+                        if ImGui.TextUtf8 then
+                           ImGui.TextUtf8(task_name_utf8)
+                        else
+                           ImGui.Text(task_name_utf8)
+                        end
+                        
+                        -- Complete button column
+                        ImGui.TableNextColumn()
+                        if ImGui.SmallButton("Complete##" .. task_id) then
+                            task_manager.get_task_manager():set_task_completed(task_id)
+                        end
+                        
+                        -- Fail button column
+                        ImGui.TableNextColumn()
+                        if ImGui.SmallButton("Fail##" .. task_id) then
+                            task_manager.get_task_manager():set_task_failed(task_id)
+                        end
+                        
+                        -- Cancel button column
+                        ImGui.TableNextColumn()
+                        if ImGui.SmallButton("Cancel##" .. task_id) then
+                            task_manager.get_task_manager():set_task_cancelled(task_id)
+                        end
+                    end
+                    
+                    ImGui.EndTable()
+                end
+            end
+            
+            ImGui.End()
+        end
+    elseif name == "MenuBar" then
+        if ImGui.BeginMenu(TASK_MANAGER_MENU) then
+            clicked, task_manager_window_visible = ImGui.MenuItem("Open", nil, task_manager_window_visible, true)
+            SendScriptCallback("imgui_on_render", TASK_MANAGER_MENU)
+            ImGui.EndMenu()
+        end
+    end
+end
+
+function on_game_start()
+    RegisterScriptCallback("imgui_on_render", imgui_on_render)
+end
+
